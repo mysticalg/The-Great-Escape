@@ -49,12 +49,15 @@ const PALETTE = {
 };
 
 // ============================================================
-// WORLD MAP  (40 x 40 tiles)
-// Each cell: { type, walkable, item, elevation }
+// WORLD MAP  (1000 x 1000 tiles)
+// Sparse storage keeps large maps fast and memory-efficient.
 // ============================================================
 
-const MAP_W = 40, MAP_H = 40;
+const MAP_W = 1000, MAP_H = 1000;
 let world = [];
+
+// Default grass tile is implicit for untouched coordinates.
+const DEFAULT_TILE = Object.freeze({ type: T.GRASS, walkable: true, item: null, elev: 0, solid: false });
 const buildingEntrances = {};
 
 // Interior areas that load as dedicated screens when entered.
@@ -86,15 +89,10 @@ const INTERIORS = {
 };
 
 function createWorld() {
-  world = [];
+  // Sparse rows: only tiles with custom properties are stored.
+  world = new Array(MAP_H);
   // Rebuild entrance lookup whenever world is regenerated.
   Object.keys(buildingEntrances).forEach(k => delete buildingEntrances[k]);
-  for (let y = 0; y < MAP_H; y++) {
-    world[y] = [];
-    for (let x = 0; x < MAP_W; x++) {
-      world[y][x] = { type: T.GRASS, walkable: true, item: null, elev: 0, solid: false };
-    }
-  }
 
   // Outer perimeter fence
   for (let x = 1; x < MAP_W-1; x++) {
@@ -169,15 +167,29 @@ function createWorld() {
   placeItem(30, 16, 'CROWBAR');
 }
 
+function ensureTile(x, y) {
+  if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return null;
+  if (!world[y]) world[y] = [];
+  if (!world[y][x]) world[y][x] = { ...DEFAULT_TILE };
+  return world[y][x];
+}
+
+function getTile(x, y) {
+  if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return null;
+  return (world[y] && world[y][x]) ? world[y][x] : DEFAULT_TILE;
+}
+
 function setTile(x, y, type, walkable, solid=true) {
-  if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return;
-  world[y][x].type = type;
-  world[y][x].walkable = walkable;
-  world[y][x].solid = solid || !walkable;
+  const tile = ensureTile(x, y);
+  if (!tile) return;
+  tile.type = type;
+  tile.walkable = walkable;
+  tile.solid = solid || !walkable;
 }
 
 function placeItem(x, y, name) {
-  if (world[y] && world[y][x]) world[y][x].item = name;
+  const tile = ensureTile(x, y);
+  if (tile) tile.item = name;
 }
 
 function buildRoom(rx, ry, rw, rh, interiorName = null) {
@@ -187,7 +199,7 @@ function buildRoom(rx, ry, rw, rh, interiorName = null) {
         setTile(x, y, T.WALL_N, false);
       } else {
         setTile(x, y, T.FLOOR, true);
-        world[y][x].solid = false;
+        getTile(x, y).solid = false;
       }
     }
   }
@@ -195,7 +207,7 @@ function buildRoom(rx, ry, rw, rh, interiorName = null) {
   const doorX = rx + Math.floor(rw/2);
   const doorY = ry + rh - 1;
   setTile(doorX, doorY, T.DOOR, true);
-  world[doorY][doorX].solid = false;
+  getTile(doorX, doorY).solid = false;
   if (interiorName) {
     buildingEntrances[`${doorX},${doorY}`] = interiorName;
   }
@@ -794,8 +806,8 @@ function canMove(x, y) {
   }
 
   if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false;
-  const tile = world[ty][tx];
-  return tile.walkable;
+  const tile = getTile(tx, ty);
+  return tile ? tile.walkable : false;
 }
 
 function hasLineOfSight(x1, y1, x2, y2) {
@@ -805,7 +817,7 @@ function hasLineOfSight(x1, y1, x2, y2) {
     const t = i / steps;
     const cx = x1 + (x2-x1)*t;
     const cy = y1 + (y2-y1)*t;
-    const tile = world[Math.floor(cy)] && world[Math.floor(cy)][Math.floor(cx)];
+    const tile = getTile(Math.floor(cx), Math.floor(cy));
     if (tile && !tile.walkable && tile.type !== T.FENCE && tile.type !== T.WIRE) return false;
   }
   return true;
@@ -949,7 +961,7 @@ function tryPickup() {
     for (let dx = -1; dx <= 1; dx++) {
       const nx = tx + dx, ny = ty + dy;
       if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) continue;
-      const tile = world[ny][nx];
+      const tile = getTile(nx, ny);
       if (tile.item) {
         const item = tile.item;
         tile.item = null;
@@ -966,7 +978,7 @@ function tryPickup() {
     }
   }
   // Try tunnel
-  const cur = world[ty][tx];
+  const cur = getTile(tx, ty);
   if (cur.type === T.TUNNEL_ENTRANCE) {
     tryUseTunnel();
   }
@@ -1071,7 +1083,7 @@ function triggerEscape(method) {
 function checkGateEscape() {
   const tx = Math.floor(player.x);
   const ty = Math.floor(player.y);
-  const tile = world[ty] && world[ty][tx];
+  const tile = getTile(tx, ty);
   if (!tile) return;
   // South outer gate
   if ((tx === 19 || tx === 20) && ty >= MAP_H-3) {
@@ -1140,7 +1152,7 @@ function renderWorld() {
       if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) continue;
       const drawX = tx - camX;
       const drawY = ty - camY;
-      const tile = world[ty][tx];
+      const tile = getTile(tx, ty);
       drawIsoTile(drawX, drawY, tile);
     }
   }
@@ -1233,31 +1245,44 @@ function renderNightOverlay() {
 function renderMinimap() {
   miniCtx.fillStyle = '#111';
   miniCtx.fillRect(0, 0, 80, 80);
-  const scale = 80 / MAP_W;
 
-  for (let ty = 0; ty < MAP_H; ty++) {
-    for (let tx = 0; tx < MAP_W; tx++) {
-      const t = world[ty][tx].type;
+  // Render only a local window so minimap stays fast on very large maps.
+  const viewRadius = 40;
+  const centerX = Math.floor(player.x);
+  const centerY = Math.floor(player.y);
+
+  for (let py = 0; py < 80; py++) {
+    for (let px = 0; px < 80; px++) {
+      const tx = centerX - viewRadius + px;
+      const ty = centerY - viewRadius + py;
+      const tile = getTile(tx, ty);
+      if (!tile) continue;
+
       let c = '#2a5a2a';
-      if (t === T.WALL_N || t === T.WALL_E) c = '#888';
-      else if (t === T.FENCE || t === T.WIRE) c = '#aa0';
-      else if (t === T.FLOOR) c = '#c8a';
-      else if (t === T.PATH || t === T.ROAD) c = '#876';
-      else if (t === T.GATE) c = '#0f0';
-      else if (t === T.TREE || t === T.BUSH) c = '#165';
+      if (tile.type === T.WALL_N || tile.type === T.WALL_E) c = '#888';
+      else if (tile.type === T.FENCE || tile.type === T.WIRE) c = '#aa0';
+      else if (tile.type === T.FLOOR) c = '#c8a';
+      else if (tile.type === T.PATH || tile.type === T.ROAD) c = '#876';
+      else if (tile.type === T.GATE) c = '#0f0';
+      else if (tile.type === T.TREE || tile.type === T.BUSH) c = '#165';
+
       miniCtx.fillStyle = c;
-      miniCtx.fillRect(tx * scale, ty * scale, scale, scale);
+      miniCtx.fillRect(px, py, 1, 1);
     }
   }
 
-  // Player
+  // Player is always centered on local minimap.
   miniCtx.fillStyle = '#0ff';
-  miniCtx.fillRect(player.x * scale - 1.5, player.y * scale - 1.5, 3, 3);
+  miniCtx.fillRect(39, 39, 3, 3);
 
-  // Guards
+  // Draw guards relative to player for directional awareness.
   miniCtx.fillStyle = '#f44';
   guards.forEach(g => {
-    miniCtx.fillRect(g.x * scale - 1, g.y * scale - 1, 2, 2);
+    const gx = Math.round(g.x - player.x) + 40;
+    const gy = Math.round(g.y - player.y) + 40;
+    if (gx >= 0 && gx < 80 && gy >= 0 && gy < 80) {
+      miniCtx.fillRect(gx, gy, 2, 2);
+    }
   });
 }
 
