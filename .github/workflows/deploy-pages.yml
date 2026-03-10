@@ -1,0 +1,42 @@
+name: Deploy static game to GitHub Pages
+
+on:
+  # Deploy automatically whenever the main branch is updated.
+  push:
+    branches: ["main"]
+  # Also allow manual deployment from the Actions tab.
+  workflow_dispatch:
+
+# Only one deployment is allowed at a time.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload game files as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # This repository is a plain HTML/JS game, so we publish from repo root.
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
