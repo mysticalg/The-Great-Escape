@@ -607,8 +607,8 @@ class Guard extends Entity {
     this.alertTimer = 0;
     this.searchTimer = 0;
     this.lastSeenX = x; this.lastSeenY = y;
-    // Guards move more deliberately to avoid "flying" behavior.
-    this.speed = 0.022;
+    // Guards move deliberately so patrols read clearly at normal frame rates.
+    this.speed = 0.009;
     this.visionRange = 6;
     this.visionAngle = Math.PI / 2;
   }
@@ -682,8 +682,10 @@ class Guard extends Entity {
     const dy = ty - this.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
     if (dist < 0.1) return dist;
-    const nx = this.x + (dx/dist) * spd * dt;
-    const ny = this.y + (dy/dist) * spd * dt;
+    // Clamp step distance to prevent overshooting a target and "ping-pong" jitter.
+    const step = Math.min(spd * dt, dist);
+    const nx = this.x + (dx / dist) * step;
+    const ny = this.y + (dy / dist) * step;
     if (canMove(nx, this.y)) this.x = nx;
     if (canMove(this.x, ny)) this.y = ny;
     if (dx !== 0 || dy !== 0) {
@@ -753,8 +755,8 @@ class Prisoner extends Entity {
     // Time in milliseconds; longer windows prevent jittery path changes.
     this.roamTimer = 1500 + Math.random() * 2000;
     this.roamTarget = { x, y };
-    // Prisoners should roam slowly to keep scenes readable.
-    this.speed = 0.014;
+    // Prisoners are intentionally slower than guards to keep the scene readable.
+    this.speed = 0.006;
   }
 
   update(dt) {
@@ -775,8 +777,10 @@ class Prisoner extends Entity {
     const dx = tx - this.x; const dy = ty - this.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
     if (dist < 0.3) return;
-    const nx = this.x + (dx/dist) * this.speed * dt;
-    const ny = this.y + (dy/dist) * this.speed * dt;
+    // Clamp movement to the remaining distance so NPCs don't dart past waypoints.
+    const step = Math.min(this.speed * dt, dist);
+    const nx = this.x + (dx / dist) * step;
+    const ny = this.y + (dy / dist) * step;
     if (canMove(nx, this.y)) this.x = nx;
     if (canMove(this.x, ny)) this.y = ny;
   }
