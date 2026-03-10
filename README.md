@@ -4,9 +4,9 @@ A browser-based retro stealth game inspired by *The Great Escape* era of classic
 
 ## Play online (GitHub Pages)
 
-After the first successful GitHub Actions deployment, your live game will be available at:
+Once GitHub Pages is enabled and the deploy workflow runs, play the game at:
 
-- **https://<your-github-username>.github.io/The-Great-Escape/**
+- [🎮 Play The Great Escape](https://<your-github-username>.github.io/The-Great-Escape/)
 
 > Tip: replace `<your-github-username>` with your GitHub username.
 
@@ -31,11 +31,13 @@ This repo includes a GitHub Actions workflow at:
 
 - `.github/workflows/deploy-pages.yml`
 
+It deploys automatically on every push to `main` or `master`.
+
 To enable it in your GitHub repository:
 
 1. Open your repository on GitHub.
 2. Go to **Settings → Pages**.
 3. Under **Build and deployment**, set **Source** to **GitHub Actions**.
-4. Push to `main` (or run the workflow manually from the **Actions** tab).
+4. Push code to `main`/`master` (or run the workflow manually from the **Actions** tab).
 
-Once deployment finishes, GitHub will publish the game URL.
+Once deployment finishes, GitHub will publish your live game URL.

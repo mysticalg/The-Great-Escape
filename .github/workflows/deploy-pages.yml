@@ -1,13 +1,13 @@
 name: Deploy static game to GitHub Pages
 
 on:
-  # Deploy automatically whenever the main branch is updated.
+  # Deploy automatically whenever the primary branch is updated.
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
   # Also allow manual deployment from the Actions tab.
   workflow_dispatch:
 
-# Only one deployment is allowed at a time.
+# Only one Pages deployment is allowed at a time.
 concurrency:
   group: "pages"
   cancel-in-progress: false
