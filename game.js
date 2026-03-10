@@ -55,9 +55,40 @@ const PALETTE = {
 
 const MAP_W = 40, MAP_H = 40;
 let world = [];
+const buildingEntrances = {};
+
+// Interior areas that load as dedicated screens when entered.
+const INTERIORS = {
+  barracks: {
+    name: 'BARRACKS',
+    width: 16,
+    height: 10,
+    exit: { x: 8, y: 9 },
+    beds: [[3,2],[6,2],[10,2],[13,2],[3,6],[6,6],[10,6],[13,6]],
+    tables: [[8,4]]
+  },
+  messHall: {
+    name: 'MESS HALL',
+    width: 16,
+    height: 10,
+    exit: { x: 8, y: 9 },
+    beds: [],
+    tables: [[4,3],[8,3],[12,3],[4,6],[8,6],[12,6]]
+  },
+  solitude: {
+    name: 'SOLITUDE BLOCK',
+    width: 12,
+    height: 10,
+    exit: { x: 6, y: 9 },
+    beds: [[3,3],[8,3]],
+    tables: [[6,6]]
+  }
+};
 
 function createWorld() {
   world = [];
+  // Rebuild entrance lookup whenever world is regenerated.
+  Object.keys(buildingEntrances).forEach(k => delete buildingEntrances[k]);
   for (let y = 0; y < MAP_H; y++) {
     world[y] = [];
     for (let x = 0; x < MAP_W; x++) {
@@ -96,8 +127,8 @@ function createWorld() {
   for (let y = 7; y < 33; y++) setTile(19, y, T.PATH, true);
 
   // --- BARRACKS BUILDING (west) ---
-  buildRoom(8, 8, 8, 6);    // Room 1
-  buildRoom(8, 16, 8, 6);   // Room 2
+  buildRoom(8, 8, 8, 6, 'barracks');    // Room 1
+  buildRoom(8, 16, 8, 6, 'barracks');   // Room 2
   placeItem(9, 9, 'BED'); placeItem(11, 9, 'BED'); placeItem(13, 9, 'BED');
   placeItem(9, 17, 'BED'); placeItem(11, 17, 'BED'); placeItem(13, 17, 'BED');
 
@@ -106,11 +137,11 @@ function createWorld() {
   placeItem(25, 9, 'TABLE'); placeItem(27, 9, 'TABLE');
 
   // --- MESS HALL (center-south) ---
-  buildRoom(15, 24, 9, 5);
+  buildRoom(15, 24, 9, 5, 'messHall');
   placeItem(16, 25, 'TABLE'); placeItem(18, 25, 'TABLE'); placeItem(20, 25, 'TABLE');
 
   // --- SOLITARY BLOCK ---
-  buildRoom(26, 23, 5, 4);
+  buildRoom(26, 23, 5, 4, 'solitude');
 
   // --- TREES & BUSHES (outside perimeter) ---
   const treePos = [[3,3],[4,5],[36,3],[35,5],[3,36],[5,35],[36,36],[35,34]];
@@ -149,7 +180,7 @@ function placeItem(x, y, name) {
   if (world[y] && world[y][x]) world[y][x].item = name;
 }
 
-function buildRoom(rx, ry, rw, rh) {
+function buildRoom(rx, ry, rw, rh, interiorName = null) {
   for (let y = ry; y < ry+rh; y++) {
     for (let x = rx; x < rx+rw; x++) {
       if (y === ry || y === ry+rh-1 || x === rx || x === rx+rw-1) {
@@ -160,10 +191,14 @@ function buildRoom(rx, ry, rw, rh) {
       }
     }
   }
-  // Door on south wall center
+  // Door on south wall center. If this room has an interior map, register the entrance.
   const doorX = rx + Math.floor(rw/2);
-  setTile(doorX, ry+rh-1, T.DOOR, true);
-  world[ry+rh-1][doorX].solid = false;
+  const doorY = ry + rh - 1;
+  setTile(doorX, doorY, T.DOOR, true);
+  world[doorY][doorX].solid = false;
+  if (interiorName) {
+    buildingEntrances[`${doorX},${doorY}`] = interiorName;
+  }
 }
 
 // ============================================================
@@ -477,7 +512,8 @@ class Player extends Entity {
     this.energy = 100;
     this.suspicion = 0;
     this.items = [];
-    this.speed = 0.06;
+    // Lower movement speed to make navigation and NPC motion feel grounded.
+    this.speed = 0.03;
     this.disguised = false;
     this.caught = false;
     this.escaped = false;
@@ -559,7 +595,8 @@ class Guard extends Entity {
     this.alertTimer = 0;
     this.searchTimer = 0;
     this.lastSeenX = x; this.lastSeenY = y;
-    this.speed = 0.04;
+    // Guards move more deliberately to avoid "flying" behavior.
+    this.speed = 0.022;
     this.visionRange = 6;
     this.visionAngle = Math.PI / 2;
   }
@@ -701,15 +738,17 @@ function drawVisionCone(sx, sy, guard) {
 class Prisoner extends Entity {
   constructor(x, y) {
     super(x, y, PALETTE.prisoner, 'PRISONER');
-    this.roamTimer = Math.random() * 100;
+    // Time in milliseconds; longer windows prevent jittery path changes.
+    this.roamTimer = 1500 + Math.random() * 2000;
     this.roamTarget = { x, y };
-    this.speed = 0.025;
+    // Prisoners should roam slowly to keep scenes readable.
+    this.speed = 0.014;
   }
 
   update(dt) {
     this.roamTimer -= dt;
     if (this.roamTimer <= 0) {
-      this.roamTimer = 80 + Math.random() * 120;
+      this.roamTimer = 2000 + Math.random() * 2500;
       this.roamTarget = {
         x: 7 + Math.random() * 25,
         y: 7 + Math.random() * 25
@@ -735,15 +774,32 @@ class Prisoner extends Entity {
 // COLLISION DETECTION
 // ============================================================
 
+function isInteriorObstacle(interior, tx, ty) {
+  return interior.beds.some(([bx, by]) => bx === tx && by === ty)
+    || interior.tables.some(([tx2, ty2]) => tx2 === tx && ty2 === ty);
+}
+
 function canMove(x, y) {
   const tx = Math.floor(x);
   const ty = Math.floor(y);
+
+  // Interior movement has different bounds and collision rules.
+  if (gameState.activeInterior) {
+    const interior = INTERIORS[gameState.activeInterior];
+    if (!interior) return false;
+    if (tx < 1 || tx >= interior.width - 1 || ty < 1 || ty >= interior.height - 1) {
+      return false;
+    }
+    return !isInteriorObstacle(interior, tx, ty);
+  }
+
   if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false;
   const tile = world[ty][tx];
   return tile.walkable;
 }
 
 function hasLineOfSight(x1, y1, x2, y2) {
+  if (gameState.activeInterior) return true;
   const steps = 20;
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
@@ -775,7 +831,8 @@ const SCHEDULE = [
 let gameState = {
   phase: 'TITLE',
   time: 6*60,       // minutes since midnight
-  timeScale: 1,     // 1 game-min per second
+  // Slower clock so schedule transitions do not feel rushed.
+  timeScale: 0.35,     // 0.35 game-min per second
   suspicion: 0,
   scheduleIdx: 0,
   rollCallMissed: 0,
@@ -786,7 +843,9 @@ let gameState = {
   dayCount: 1,
   currentActivity: 'wakeup',
   tunnelProgress: 0,
-  escapePhase: 'none'
+  escapePhase: 'none',
+  activeInterior: null,
+  lastExteriorDoor: null
 };
 
 let player, guards, prisoners;
@@ -825,6 +884,8 @@ function initGame() {
   gameState.dayCount = 1;
   gameState.tunnelProgress = 0;
   gameState.escapePhase = 'none';
+  gameState.activeInterior = null;
+  gameState.lastExteriorDoor = null;
 }
 
 function getCurrentSchedule() {
@@ -874,7 +935,13 @@ function renderMessages() {
 // PICK UP ITEMS
 // ============================================================
 
+
 function tryPickup() {
+  if (gameState.activeInterior) {
+    showMessage('No useful items here. Press F to exit building.', '#aaa');
+    return;
+  }
+
   const tx = Math.floor(player.x);
   const ty = Math.floor(player.y);
   // Check surrounding tiles
@@ -903,6 +970,54 @@ function tryPickup() {
   if (cur.type === T.TUNNEL_ENTRANCE) {
     tryUseTunnel();
   }
+}
+
+function tryInteract() {
+  if (gameState.activeInterior) {
+    tryExitBuilding();
+    return;
+  }
+
+  const tx = Math.floor(player.x);
+  const ty = Math.floor(player.y);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const key = `${tx + dx},${ty + dy}`;
+      if (buildingEntrances[key]) {
+        enterBuilding(buildingEntrances[key], key);
+        return;
+      }
+    }
+  }
+  showMessage('No doorway nearby. Move to a building door to enter.', '#aaa');
+}
+
+function enterBuilding(interiorName, doorKey) {
+  const interior = INTERIORS[interiorName];
+  if (!interior) return;
+  gameState.activeInterior = interiorName;
+  gameState.lastExteriorDoor = doorKey;
+  player.x = interior.exit.x;
+  player.y = interior.exit.y - 1;
+  player.suspicion = Math.max(0, player.suspicion - 2);
+  showMessage(`Entered ${interior.name}. Press F to exit.`, '#0ff');
+}
+
+function tryExitBuilding() {
+  const interior = INTERIORS[gameState.activeInterior];
+  if (!interior) return;
+  const tx = Math.floor(player.x);
+  const ty = Math.floor(player.y);
+  const nearExit = Math.abs(tx - interior.exit.x) <= 1 && Math.abs(ty - interior.exit.y) <= 1;
+  if (!nearExit) {
+    showMessage('Find the exit door tile to leave this building.', '#ff0');
+    return;
+  }
+  const [doorX, doorY] = (gameState.lastExteriorDoor || '19,20').split(',').map(Number);
+  player.x = doorX + 0.5;
+  player.y = doorY + 1.1;
+  gameState.activeInterior = null;
+  showMessage('Back outside. Guards can see you again.', '#0ff');
 }
 
 function checkEscapeReady() {
@@ -1031,6 +1146,68 @@ function renderWorld() {
   }
 }
 
+function renderInterior() {
+  const interior = INTERIORS[gameState.activeInterior];
+  if (!interior) return;
+
+  // Dedicated interior area screen with clear room framing.
+  ctx.fillStyle = '#101820';
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+
+  const tileSize = 36;
+  const roomW = interior.width * tileSize;
+  const roomH = interior.height * tileSize;
+  const startX = Math.floor((BASE_W - roomW) / 2);
+  const startY = Math.floor((BASE_H - roomH) / 2);
+
+  for (let y = 0; y < interior.height; y++) {
+    for (let x = 0; x < interior.width; x++) {
+      const px = startX + x * tileSize;
+      const py = startY + y * tileSize;
+      const isWall = (x === 0 || y === 0 || x === interior.width - 1 || y === interior.height - 1);
+      ctx.fillStyle = isWall ? '#2f2f2f' : '#5f513a';
+      ctx.fillRect(px, py, tileSize - 1, tileSize - 1);
+    }
+  }
+
+  interior.beds.forEach(([bx, by]) => {
+    const px = startX + bx * tileSize;
+    const py = startY + by * tileSize;
+    ctx.fillStyle = PALETTE.bed;
+    ctx.fillRect(px + 4, py + 8, tileSize - 8, tileSize - 14);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(px + 6, py + 10, 12, 8);
+  });
+
+  interior.tables.forEach(([tx, ty]) => {
+    const px = startX + tx * tileSize;
+    const py = startY + ty * tileSize;
+    ctx.fillStyle = PALETTE.table;
+    ctx.fillRect(px + 5, py + 8, tileSize - 10, tileSize - 16);
+    ctx.fillStyle = PALETTE.tableLight;
+    ctx.fillRect(px + 5, py + 8, tileSize - 10, 6);
+  });
+
+  const ex = startX + interior.exit.x * tileSize;
+  const ey = startY + interior.exit.y * tileSize;
+  ctx.fillStyle = '#2a7';
+  ctx.fillRect(ex + 8, ey + 10, tileSize - 16, tileSize - 12);
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('EXIT', ex + 7, ey + 24);
+
+  const px = startX + Math.floor(player.x) * tileSize;
+  const py = startY + Math.floor(player.y) * tileSize;
+  ctx.fillStyle = '#0ff';
+  ctx.beginPath();
+  ctx.arc(px + tileSize / 2, py + tileSize / 2, 10, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText(`${interior.name} - EXPLORE (WASD) / EXIT (F)`, 12, BASE_H - 14);
+}
+
 function renderEntities() {
   const camX = gameState.camera.x;
   const camY = gameState.camera.y;
@@ -1093,7 +1270,8 @@ function updateHUD() {
     `DAY ${gameState.dayCount}  ${formatTime(gameState.time)}`;
 
   const sched = getCurrentSchedule();
-  document.getElementById('scheduleInfo').textContent = `SCHEDULE: ${sched.name}`;
+  const interiorLabel = gameState.activeInterior ? ` | INSIDE: ${INTERIORS[gameState.activeInterior].name}` : '';
+  document.getElementById('scheduleInfo').textContent = `SCHEDULE: ${sched.name}${interiorLabel}`;
 
   // Messages timer
   gameState.messages.forEach(m => m.timer--);
@@ -1185,13 +1363,14 @@ function gameLoop(timestamp) {
       }
     }
 
-    // Update entities
+    // Update entities. Interior mode pauses outside NPC simulation.
     player.update(dt, gameState.keys);
-    guards.forEach(g => g.update(dt, player));
-    prisoners.forEach(p => p.update(dt));
-
-    updateCamera();
-    checkGateEscape();
+    if (!gameState.activeInterior) {
+      guards.forEach(g => g.update(dt, player));
+      prisoners.forEach(p => p.update(dt));
+      updateCamera();
+      checkGateEscape();
+    }
 
     if (gameState.phase === 'CAUGHT') { showCaughtScreen(); }
     if (gameState.phase === 'WIN') { /* handled in trigger */ }
@@ -1207,11 +1386,15 @@ function gameLoop(timestamp) {
   ctx.fillRect(0, 0, BASE_W, BASE_H);
 
   if (gameState.phase === 'PLAYING' || gameState.phase === 'CAUGHT' || gameState.phase === 'WIN') {
-    renderWorld();
-    renderEntities();
-    renderNightOverlay();
+    if (gameState.activeInterior) {
+      renderInterior();
+    } else {
+      renderWorld();
+      renderEntities();
+      renderNightOverlay();
+    }
     updateHUD();
-    renderMinimap();
+    if (!gameState.activeInterior) renderMinimap();
   }
 
   gameState.frameCount++;
@@ -1227,6 +1410,7 @@ document.addEventListener('keydown', (e) => {
   if (gameState.phase === 'PLAYING') {
     if (e.key === 'e' || e.key === 'E') tryPickup();
     if (e.key === ' ') tryPickup();
+    if (e.key === 'f' || e.key === 'F') tryInteract();
     // Hint on H key
     if (e.key === 'h' || e.key === 'H') {
       showHint();
@@ -1248,7 +1432,7 @@ function showHint() {
   if (needed.length > 0) {
     showMessage(`Still need: ${needed.join(', ')}`, '#0ff');
   } else {
-    showMessage('Head to the south gate to escape!', '#0f0');
+    showMessage('Head to the south gate to escape! Use F for building doors.', '#0f0');
   }
 }
 
